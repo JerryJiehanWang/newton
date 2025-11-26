@@ -55,6 +55,13 @@ class Example:
         body_sphere = builder.add_body(xform=wp.transform(p=self.sphere_pos, q=wp.quat_identity()), key="sphere")
         builder.add_shape_sphere(body_sphere, radius=0.5)
 
+        # ELLIPSOID (flat disk shape: a=b > c for stability when resting on ground)
+        self.ellipsoid_pos = wp.vec3(0.0, -6.0, drop_z)
+        body_ellipsoid = builder.add_body(
+            xform=wp.transform(p=self.ellipsoid_pos, q=wp.quat_identity()), key="ellipsoid"
+        )
+        builder.add_shape_ellipsoid(body_ellipsoid, a=0.5, b=0.5, c=0.25)
+
         # CAPSULE
         self.capsule_pos = wp.vec3(0.0, 0.0, drop_z)
         body_capsule = builder.add_body(xform=wp.transform(p=self.capsule_pos, q=wp.quat_identity()), key="capsule")
@@ -144,6 +151,16 @@ class Example:
             lambda q, qd: newton.utils.vec_allclose(q, sphere_q, atol=1e-4),
             [0],
         )
+        # Ellipsoid with a=b=0.5, c=0.25 is stable (flat disk), rests at z=0.25
+        self.ellipsoid_pos[2] = 0.25
+        ellipsoid_q = wp.transform(self.ellipsoid_pos, wp.quat_identity())
+        newton.examples.test_body_state(
+            self.model,
+            self.state_0,
+            "ellipsoid at rest pose",
+            lambda q, qd: newton.utils.vec_allclose(q, ellipsoid_q, atol=2e-2),
+            [1],
+        )
         self.capsule_pos[2] = 1.0
         capsule_q = wp.transform(self.capsule_pos, wp.quat_identity())
         newton.examples.test_body_state(
@@ -169,7 +186,7 @@ class Example:
             self.state_0,
             "box at rest pose",
             lambda q, qd: newton.utils.vec_allclose(q, box_q, atol=0.1),
-            [3],
+            [4],
         )
         # we only test that the bunny didn't fall through the ground and didn't slide too far
         newton.examples.test_body_state(
@@ -177,7 +194,7 @@ class Example:
             self.state_0,
             "bunny at rest pose",
             lambda q, qd: q[2] > 0.01 and abs(q[0]) < 0.1 and abs(q[1] - 4.0) < 0.1,
-            [4],
+            [5],
         )
 
     def render(self):

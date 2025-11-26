@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Some ray intersection functions are adapted from https://iquilezles.org/articles/intersectors/
 
 import warp as wp
 
@@ -479,6 +480,9 @@ def ray_intersect_geom(
         r = size[0]
         h = size[1]
         t_hit = ray_intersect_cone(geom_to_world, ray_origin, ray_direction, r, h)
+
+    elif geomtype == GeoType.ELLIPSOID:
+        t_hit = ray_intersect_ellipsoid(geom_to_world, ray_origin, ray_direction, size)
 
     elif geomtype == GeoType.MESH or geomtype == GeoType.CONVEX_MESH:
         t_hit = ray_intersect_mesh(geom_to_world, ray_origin, ray_direction, size, mesh_id)
