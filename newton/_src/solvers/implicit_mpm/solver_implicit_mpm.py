@@ -31,7 +31,8 @@ from ..solver import SolverBase
 from .rasterized_collisions import (
     Collider,
     allot_collider_mass,
-    build_rigidity_matrix,
+    build_rigidity_operator,
+    interpolate_collider_normals,
     project_outside_collider,
     rasterize_collider,
 )
@@ -65,8 +66,7 @@ _INFINITY = wp.constant(1.0e12)
 _EPSILON = wp.constant(1.0 / _INFINITY)
 """Value below which quantities are considered zero"""
 
-
-_DEFAULT_PROJECTION_THRESHOLD = wp.constant(0.5)
+_DEFAULT_PROJECTION_THRESHOLD = 0.01
 """Default threshold for projection outside of collider, as a fraction of the voxel size"""
 
 _DEFAULT_THICKNESS = 0.5
@@ -97,6 +97,30 @@ def integrate_collider_fraction(
     inv_cell_volume: float,
 ):
     return phi(s) * wp.where(sdf(s) <= 0.0, inv_cell_volume, 0.0)
+
+
+@fem.integrand
+def integrate_collider_fraction_apic(
+    s: fem.Sample,
+    domain: fem.Domain,
+    phi: fem.Field,
+    sdf: fem.Field,
+    sdf_gradient: fem.Field,
+    inv_cell_volume: float,
+):
+    # APIC collider fraction prediction
+    node_count = fem.node_count(sdf, s)
+    pos = domain(s)
+    min_sdf = float(_INFINITY)
+    for k in range(node_count):
+        s_node = fem.at_node(sdf, s, k)
+        sdf_value = sdf(s_node, k)
+        sdf_gradient_value = sdf_gradient(s_node, k)
+
+        node_offset = pos - domain(s_node)
+        min_sdf = wp.min(min_sdf, sdf_value + wp.dot(sdf_gradient_value, node_offset))
+
+    return phi(s) * wp.where(min_sdf <= 0.0, inv_cell_volume, 0.0)
 
 
 @fem.integrand
@@ -592,6 +616,9 @@ class _ImplicitMPMScratchpad:
         self.collider_adhesion = None
         self.collider_inv_mass_matrix = None
 
+        self.collider_matrix = sp.bsr_zeros(0, 0, block_type=float)
+        self.transposed_collider_matrix = sp.bsr_zeros(0, 0, block_type=float)
+
         self.strain_node_particle_volume = None
         self.strain_node_volume = None
         self.strain_node_collider_volume = None
@@ -638,17 +665,14 @@ class _ImplicitMPMScratchpad:
         domain = self.domain
         grid = domain.geometry
 
-        if strain_basis_str not in ("P0", "Q1"):
-            raise ValueError(f"Unsupported strain basis: {strain_basis_str}")
+        if self.domain.geometry is not self.grid:
+            self.grid = self.domain.geometry
 
-        strain_degree = 0 if strain_basis_str == "P0" else 1
-        discontinuous = strain_basis_str != "Q1"
+            # Define function spaces: linear (Q1) for velocity and volume fraction,
+            # zero or first order for pressure
+            self._velocity_basis = fem.make_polynomial_basis_space(self.grid, degree=1)
 
-        strain_basis = fem.make_polynomial_basis_space(
-            grid,
-            degree=strain_degree,
-            discontinuous=discontinuous,
-        )
+            self._strain_basis = _make_grid_basis_space(self.grid, strain_basis_str)
 
         sym_strain_space = fem.make_collocated_function_space(
             strain_basis,
@@ -730,6 +754,18 @@ class _ImplicitMPMScratchpad:
 
         self.stress_field = sym_strain_space.make_field(space_partition=strain_space_partition)
 
+    @property
+    def collider_node_count(self) -> int:
+        return self._collision_space_restriction.space_partition.node_count()
+
+    @property
+    def velocity_node_count(self) -> int:
+        return self._vel_space_restriction.space_partition.node_count()
+
+    @property
+    def strain_node_count(self) -> int:
+        return self._strain_space_restriction.space_partition.node_count()
+
     def allocate_temporaries(
         self,
         collider_count: int,
@@ -739,8 +775,9 @@ class _ImplicitMPMScratchpad:
         temporary_store: fem.TemporaryStore,
     ):
         """Allocate transient arrays sized to current grid and options."""
-        vel_node_count = self._vel_space_restriction.space_partition.node_count()
-        strain_node_count = self._strain_space_restriction.space_partition.node_count()
+        vel_node_count = self.velocity_node_count
+        collider_node_count = self.collider_node_count
+        strain_node_count = self.strain_node_count
 
         self.inv_mass_matrix = fem.borrow_temporary(temporary_store, shape=(vel_node_count,), dtype=float)
         self.node_positions = fem.borrow_temporary(temporary_store, shape=(vel_node_count,), dtype=wp.vec3)
@@ -752,6 +789,7 @@ class _ImplicitMPMScratchpad:
 
         self.strain_node_particle_volume = fem.borrow_temporary(temporary_store, shape=strain_node_count, dtype=float)
         self.int_symmetric_strain = fem.borrow_temporary(temporary_store, shape=strain_node_count, dtype=vec6)
+        self.unilateral_strain_offset = fem.borrow_temporary(temporary_store, shape=strain_node_count, dtype=float)
 
         if has_critical_fraction:
             self.strain_node_volume = fem.borrow_temporary(temporary_store, shape=strain_node_count, dtype=float)
@@ -774,8 +812,10 @@ class _ImplicitMPMScratchpad:
         self.collider_friction.release()
         self.collider_adhesion.release()
         self.collider_inv_mass_matrix.release()
+        self.collider_node_volume.release()
         self.int_symmetric_strain.release()
         self.strain_node_particle_volume.release()
+        self.unilateral_strain_offset.release()
 
         if self.strain_node_volume is not None:
             self.strain_node_volume.release()
@@ -1351,12 +1391,7 @@ class SolverImplicitMPM(SolverBase):
         Returns:
             A geometry partition suitable for FEM field assembly.
         """
-        with wp.ScopedTimer(
-            "Allocate grid",
-            active=self._enable_timers,
-            use_nvtx=self._timers_use_nvtx,
-            synchronize=not self._timers_use_nvtx,
-        ):
+        with self._timer("Allocate grid"):
             if self.grid_type == "sparse":
                 volume = _allocate_by_voxels(positions, voxel_size, padding_voxels=padding_voxels)
                 grid = fem.Nanogrid(volume)
@@ -1467,16 +1502,12 @@ class SolverImplicitMPM(SolverBase):
         has_hardening = mpm_model.max_hardening > 0.0
 
         # Bin particles to grid cells
-        with wp.ScopedTimer(
-            "Bin particles",
-            active=self._enable_timers,
-            use_nvtx=self._timers_use_nvtx,
-            synchronize=not self._timers_use_nvtx,
-        ):
+        with self._timer("Bin particles"):
+            domain = fem.Cells(geo_partition)
             pic = fem.PicQuadrature(
                 domain=domain,
-                positions=state_in.particle_q,
-                measures=mpm_model.particle_volume,
+                positions=positions,
+                measures=self.mpm_model.particle_volume,
             )
 
             if self.grid_type == "fixed":
@@ -1513,12 +1544,40 @@ class SolverImplicitMPM(SolverBase):
                 ],
             )
         # Velocity right-hand side and inverse mass matrix
-        with wp.ScopedTimer(
-            "Unconstrained velocity",
-            active=self._enable_timers,
-            use_nvtx=self._timers_use_nvtx,
-            synchronize=not self._timers_use_nvtx,
-        ):
+        self._compute_unconstrained_velocity(state_in, state_out, dt, pic, scratch, inv_cell_volume)
+
+        # Build collider rigidity matrix
+        rigidity_operator = self._build_collider_rigidity_operator(state_in, scratch, cell_volume)
+
+        self._require_strain_space_fields(state_out, scratch)
+
+        # Build elasticity compliance matrix and right-hand-side
+        self._build_elasticity_system(state_in, dt, pic, scratch, inv_cell_volume)
+
+        # Build strain matrix and offset, setup yield surface parameters
+        self._build_plasticity_system(state_in, dt, pic, scratch, inv_cell_volume)
+
+        # Solve implicit system
+        self._solve_rheology(state_in, state_out, scratch, rigidity_operator)
+
+        # Update and advect particles
+        self._update_particles(state_in, state_out, dt, pic, scratch)
+
+    def _compute_unconstrained_velocity(
+        self,
+        state_in: newton.State,
+        state_out: newton.State,
+        dt: float,
+        pic: fem.PicQuadrature,
+        scratch: _ImplicitMPMScratchpad,
+        inv_cell_volume: float,
+    ):
+        """Compute the unconstrained (ballistic) velocity at grid nodes, as well as inverse mass matrix."""
+
+        model = self.model
+        mpm_model = self.mpm_model
+
+        with self._timer("Unconstrained velocity"):
             velocity_int = fem.integrate(
                 integrate_velocity,
                 quadrature=pic,
@@ -1564,7 +1623,7 @@ class SolverImplicitMPM(SolverBase):
             drag = mpm_model.air_drag * dt
             wp.launch(
                 free_velocity,
-                dim=vel_node_count,
+                dim=scratch.velocity_node_count,
                 inputs=[
                     velocity_int,
                     node_particle_mass,
@@ -1617,32 +1676,19 @@ class SolverImplicitMPM(SolverBase):
         scratch.require_strain_space_fields()
         strain_node_count = scratch.stress_field.space.node_count()
 
-        if has_compliant_particles:
-            with wp.ScopedTimer(
-                "Elasticity",
-                active=self._enable_timers,
-                use_nvtx=self._timers_use_nvtx,
-                synchronize=not self._timers_use_nvtx,
-            ):
-                node_particle_volume = fem.integrate(
-                    integrate_fraction,
-                    quadrature=pic,
-                    fields={"phi": scratch.fraction_test},
-                    values={"inv_cell_volume": inv_cell_volume},
-                    output_dtype=float,
-                )
+            rigidity_operator = build_rigidity_operator(
+                cell_volume=cell_volume,
+                node_volumes=scratch.collider_node_volume,
+                node_positions=scratch.collider_position_field.dof_values,
+                collider=self.mpm_model.collider,
+                body_q=state_in.body_q,
+                body_mass=self.mpm_model.collider_body_mass,
+                body_inv_inertia=self.mpm_model.collider_body_inv_inertia,
+                collider_ids=scratch.collider_ids,
+                collider_total_volumes=scratch.collider_total_volumes,
+            )
 
-                elastic_parameters_int = fem.integrate(
-                    integrate_elastic_parameters,
-                    quadrature=pic,
-                    fields={"u": scratch.velocity_test},
-                    values={
-                        "particle_Jp": state_in.particle_Jp,
-                        "material_parameters": mpm_model.material_parameters,
-                        "inv_cell_volume": inv_cell_volume,
-                    },
-                    output_dtype=wp.vec3,
-                )
+        return rigidity_operator
 
                 fem.interpolate(
                     averaged_elastic_parameters,
@@ -1685,12 +1731,79 @@ class SolverImplicitMPM(SolverBase):
         else:
             scratch.int_symmetric_strain.array.zero_()
 
-        with wp.ScopedTimer(
-            "Compute strain-node volumes",
-            active=self._enable_timers,
-            use_nvtx=self._timers_use_nvtx,
-            synchronize=not self._timers_use_nvtx,
-        ):
+        with self._timer("Elasticity"):
+            node_particle_volume = fem.integrate(
+                integrate_fraction,
+                quadrature=pic,
+                fields={"phi": scratch.fraction_test},
+                values={"inv_cell_volume": inv_cell_volume},
+                output_dtype=float,
+            )
+
+            elastic_parameters_int = fem.integrate(
+                integrate_elastic_parameters,
+                quadrature=pic,
+                fields={"u": scratch.velocity_test},
+                values={
+                    "particle_Jp": state_in.particle_Jp,
+                    "material_parameters": mpm_model.material_parameters,
+                    "inv_cell_volume": inv_cell_volume,
+                },
+                output_dtype=wp.vec3,
+            )
+
+            wp.launch(
+                average_elastic_parameters,
+                dim=scratch.elastic_parameters_field.space_partition.node_count(),
+                inputs=[
+                    elastic_parameters_int,
+                    node_particle_volume,
+                    scratch.elastic_parameters_field.dof_values,
+                ],
+            )
+
+            fem.integrate(
+                strain_rhs,
+                quadrature=pic,
+                fields={
+                    "tau": scratch.sym_strain_test,
+                    "elastic_parameters": scratch.elastic_parameters_field,
+                },
+                values={
+                    "elastic_strains": state_in.particle_elastic_strain,
+                    "inv_cell_volume": inv_cell_volume,
+                    "dt": dt,
+                },
+                output=scratch.int_symmetric_strain,
+            )
+
+            fem.integrate(
+                compliance_form,
+                quadrature=pic,
+                fields={
+                    "tau": scratch.sym_strain_test,
+                    "sig": scratch.sym_strain_trial,
+                    "elastic_parameters": scratch.elastic_parameters_field,
+                },
+                values={
+                    "elastic_strains": state_in.particle_elastic_strain,
+                    "inv_cell_volume": inv_cell_volume,
+                    "dt": dt,
+                },
+                output=scratch.compliance_matrix,
+            )
+
+    def _build_plasticity_system(
+        self,
+        state_in: newton.State,
+        dt: float,
+        pic: fem.PicQuadrature,
+        scratch: _ImplicitMPMScratchpad,
+        inv_cell_volume: float,
+    ):
+        mpm_model = self.mpm_model
+
+        with self._timer("Compute strain-node volumes"):
             fem.integrate(
                 integrate_fraction,
                 quadrature=pic,
@@ -1699,12 +1812,7 @@ class SolverImplicitMPM(SolverBase):
                 output=scratch.strain_node_particle_volume.array,
             )
 
-        with wp.ScopedTimer(
-            "Interpolated yield parameters",
-            active=self._enable_timers,
-            use_nvtx=self._timers_use_nvtx,
-            synchronize=not self._timers_use_nvtx,
-        ):
+        with self._timer("Interpolated yield parameters"):
             yield_parameters_int = fem.integrate(
                 integrate_yield_parameters,
                 quadrature=pic,
@@ -1732,12 +1840,7 @@ class SolverImplicitMPM(SolverBase):
         # Void fraction (unilateral incompressibility offset)
         unilateral_strain_offset = wp.zeros_like(scratch.strain_node_particle_volume.array)
         if mpm_model.critical_fraction > 0.0:
-            with wp.ScopedTimer(
-                "Unilateral offset",
-                active=self._enable_timers,
-                use_nvtx=self._timers_use_nvtx,
-                synchronize=not self._timers_use_nvtx,
-            ):
+            with self._timer("Unilateral offset"):
                 fem.integrate(
                     integrate_fraction,
                     fields={"phi": scratch.divergence_test},
@@ -1759,7 +1862,7 @@ class SolverImplicitMPM(SolverBase):
 
                 wp.launch(
                     compute_unilateral_strain_offset,
-                    dim=strain_node_count,
+                    dim=scratch.strain_node_count,
                     inputs=[
                         mpm_model.critical_fraction,
                         scratch.strain_node_particle_volume.array,
@@ -1768,6 +1871,8 @@ class SolverImplicitMPM(SolverBase):
                         unilateral_strain_offset,
                     ],
                 )
+        else:
+            scratch.unilateral_strain_offset.zero_()
 
         # Strain jacobian
         with wp.ScopedTimer(
@@ -1804,14 +1909,12 @@ class SolverImplicitMPM(SolverBase):
         ):
             self._warmstart_fields(scratch, state_in, state_out)
 
-        with wp.ScopedTimer(
-            "Strain solve",
-            active=self._enable_timers,
-            use_nvtx=self._timers_use_nvtx,
-            synchronize=not self._timers_use_nvtx,
-        ):
+        with self._timer("Warmstart fields"):
+            self._warmstart_fields(state_in.ws_impulse_field, state_in.ws_stress_field, scratch)
+
+        with self._timer("Strain solve"):
             # Retain graph to avoid immediate CPU synch
-            _solve_graph = solve_rheology(
+            solve_graph = solve_rheology(
                 self.max_iterations,
                 self.tolerance,
                 scratch.strain_matrix,
@@ -1834,7 +1937,7 @@ class SolverImplicitMPM(SolverBase):
                 color_offsets=scratch.color_offsets,
                 color_indices=None if scratch.color_indices is None else scratch.color_indices.array,
                 color_nodes_per_element=scratch.color_nodes_per_element,
-                rigidity_mat=rigidity_matrix,
+                rigidity_operator=rigidity_operator,
                 temporary_store=self.temporary_store,
                 use_graph=self._use_cuda_graph,
             )
@@ -1851,17 +1954,33 @@ class SolverImplicitMPM(SolverBase):
                 ],
             )
 
+        with self._timer("Save warmstart"):
+            self._save_for_next_warmstart(state_out)
+
+        return solve_graph
+
+    def _update_particles(
+        self,
+        state_in: newton.State,
+        state_out: newton.State,
+        dt: float,
+        pic: fem.PicQuadrature,
+        scratch: _ImplicitMPMScratchpad,
+    ):
+        """Update particle quantities (strains, velocities, ...) from grid fields an advect them."""
+
+        model = self.model
+        mpm_model = self.mpm_model
+
+        has_compliant_particles = mpm_model.min_young_modulus < _INFINITY
+        has_hardening = mpm_model.max_hardening > 0.0
+
         if has_compliant_particles or has_hardening:
-            with wp.ScopedTimer(
-                "Particle strain update",
-                active=self._enable_timers,
-                use_nvtx=self._timers_use_nvtx,
-                synchronize=not self._timers_use_nvtx,
-            ):
+            with self._timer("Particle strain update"):
                 # Update particle elastic strain from grid strain delta
                 fem.interpolate(
                     update_particle_strains,
-                    quadrature=pic,
+                    at=pic,
                     values={
                         "dt": dt,
                         "particle_flags": model.particle_flags,
@@ -1879,15 +1998,10 @@ class SolverImplicitMPM(SolverBase):
                 )
 
         # (A)PIC advection
-        with wp.ScopedTimer(
-            "Advection",
-            active=self._enable_timers,
-            use_nvtx=self._timers_use_nvtx,
-            synchronize=not self._timers_use_nvtx,
-        ):
+        with self._timer("Advection"):
             fem.interpolate(
                 advect_particles,
-                quadrature=pic,
+                at=pic,
                 values={
                     "particle_flags": model.particle_flags,
                     "pos": state_out.particle_q,

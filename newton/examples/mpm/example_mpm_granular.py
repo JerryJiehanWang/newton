@@ -83,6 +83,10 @@ class Example:
         self.solver.enrich_state(self.state_1)
 
         self.viewer.set_model(self.model)
+
+        if isinstance(self.viewer, newton.viewer.ViewerGL):
+            self.viewer.register_ui_callback(self.render_ui, position="side")
+
         self.viewer.show_particles = True
 
     def simulate(self):
@@ -115,7 +119,38 @@ class Example:
     def render(self):
         self.viewer.begin_frame(self.sim_time)
         self.viewer.log_state(self.state_0)
+
+        if self.show_normals:
+            # for debugging purposes, we can visualize the collider normals
+            _impulses, pos, _cid = self.solver.collect_collider_impulses(self.state_0)
+            normals = self.state_0.collider_normal_field.dof_values
+
+            normal_vecs = 0.25 * self.solver.mpm_model.voxel_size * normals
+            root = pos
+            mid = pos + normal_vecs
+            tip = mid + normal_vecs
+
+            # draw two segments per normal so we can visualize direction (red roots, orange tips)
+            self.viewer.log_lines(
+                "/normal_roots",
+                starts=root,
+                ends=mid,
+                colors=wp.full(pos.shape[0], value=wp.vec3(0.8, 0.0, 0.0), dtype=wp.vec3),
+            )
+            self.viewer.log_lines(
+                "/normal_tips",
+                starts=mid,
+                ends=tip,
+                colors=wp.full(pos.shape[0], value=wp.vec3(1.0, 0.5, 0.3), dtype=wp.vec3),
+            )
+        else:
+            self.viewer.log_lines("/normal_roots", None, None, None)
+            self.viewer.log_lines("/normal_tips", None, None, None)
+
         self.viewer.end_frame()
+
+    def render_ui(self, imgui):
+        _changed, self.show_normals = imgui.checkbox("Show Normals", self.show_normals)
 
     @staticmethod
     def emit_particles(builder: newton.ModelBuilder, args):
@@ -202,7 +237,7 @@ if __name__ == "__main__":
     parser = newton.examples.create_parser()
 
     # Scene configuration
-    parser.add_argument("--collider", default="cube", choices=["cube", "wedge", "none"], type=str)
+    parser.add_argument("--collider", default="cube", choices=["cube", "wedge", "concave", "none"], type=str)
     parser.add_argument("--emit-lo", type=float, nargs=3, default=[-1, -1, 1.5])
     parser.add_argument("--emit-hi", type=float, nargs=3, default=[1, 1, 3.5])
     parser.add_argument("--gravity", type=float, nargs=3, default=[0, 0, -10])
@@ -228,6 +263,7 @@ if __name__ == "__main__":
     parser.add_argument("--transfer-scheme", "-ts", type=str, default="apic", choices=["apic", "pic"])
 
     parser.add_argument("--strain-basis", "-sb", type=str, default="P0", choices=["P0", "Q1"])
+    parser.add_argument("--collider-basis", "-cb", type=str, default="Q1")
 
     parser.add_argument("--max-iterations", "-it", type=int, default=250)
     parser.add_argument("--tolerance", "-tol", type=float, default=1.0e-6)

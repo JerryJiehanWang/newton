@@ -24,7 +24,8 @@ from .solve_rheology import solve_coulomb_isotropic
 __all__ = [
     "Collider",
     "allot_collider_mass",
-    "build_rigidity_matrix",
+    "build_rigidity_operator",
+    "interpolate_collider_normals",
     "project_outside_collider",
     "rasterize_collider",
 ]
@@ -33,7 +34,7 @@ _COLLIDER_EXTRAPOLATION_DISTANCE = wp.constant(0.25)
 """Distance to extrapolate collider sdf, as a fraction of the voxel size"""
 
 _INFINITY = wp.constant(1.0e12)
-"""Mass over which colliders are considered kinematic"""
+"""Threshold over which values are considered infinite"""
 
 _NULL_COLLIDER_ID = -2
 _GROUND_COLLIDER_ID = -1
@@ -103,7 +104,7 @@ def collision_sdf(x: wp.vec3, collider: Collider):
                 if wp.abs(d) < 0.0001:
                     sdf_grad = wp.mesh_eval_face_normal(mesh, query.face)
                 else:
-                    sdf_grad = wp.normalize(offset) * query.sign
+                    sdf_grad = wp.normalize(offset) * sign
 
                 sdf_vel = wp.mesh_eval_velocity(mesh, query.face, query.u, query.v)
                 collider_id = m
@@ -239,11 +240,13 @@ def project_outside_collider(
 
 
 @wp.kernel
-def rasterize_collider(
+def rasterize_collider_kernel(
     collider: Collider,
     voxel_size: float,
+    activation_distance: float,
     dt: float,
     node_positions: wp.array(dtype=wp.vec3),
+    node_volumes: wp.array(dtype=float),
     collider_sdf: wp.array(dtype=float),
     collider_velocity: wp.array(dtype=wp.vec3),
     collider_normals: wp.array(dtype=wp.vec3),
@@ -364,6 +367,129 @@ def fill_collider_rigidity_matrices(
         non_rigid_diagonal[i] = wp.mat33(0.0)
 
 
+@fem.integrand
+def world_position(
+    s: fem.Sample,
+    domain: fem.Domain,
+):
+    return domain(s)
+
+
+@fem.integrand
+def collider_gradient_field(s: fem.Sample, domain: fem.Domain, distance: fem.Field, normal: fem.Field):
+    min_sdf = float(_INFINITY)
+    min_pos = wp.vec3(0.0)
+    min_grad = wp.vec3(0.0)
+
+    # min sdf over all nodes in the element
+    elem_count = fem.node_count(distance, s)
+    for k in range(elem_count):
+        s_node = fem.at_node(distance, s, k)
+        sdf = distance(s_node, k)
+        if sdf < min_sdf:
+            min_sdf = sdf
+            min_pos = domain(s_node)
+            min_grad = normal(s_node, k)
+
+    if min_sdf == _INFINITY:
+        return wp.vec3(0.0)
+
+    # compute gradient, filtering invalid values
+    sdf_gradient = wp.vec3(0.0)
+    for k in range(elem_count):
+        s_node = fem.at_node(distance, s, k)
+        sdf = distance(s_node, k)
+        pos = domain(s_node)
+
+        # if the sdf value is not acceptable (larger than min_sdf + distance between nodes),
+        # replace with linearized approximation
+        if sdf >= min_sdf + wp.length(pos - min_pos):
+            sdf = wp.min(sdf, min_sdf + wp.dot(min_grad, pos - min_pos))
+
+        sdf_gradient += sdf * fem.node_inner_weight_gradient(distance, s, k)
+
+    return sdf_gradient
+
+
+@wp.kernel
+def normalize_gradient(
+    gradient: wp.array(dtype=wp.vec3),
+    normal: wp.array(dtype=wp.vec3),
+):
+    i = wp.tid()
+    normal[i] = wp.normalize(gradient[i])
+
+
+def rasterize_collider(
+    collider: Collider,
+    body_q: wp.array(dtype=wp.transform),
+    body_qd: wp.array(dtype=wp.spatial_vector),
+    voxel_size: float,
+    dt: float,
+    collider_space_restriction: fem.SpaceRestriction,
+    collider_node_volume: wp.array(dtype=float),
+    collider_position_field: fem.DiscreteField,
+    collider_distance_field: fem.DiscreteField,
+    collider_normal_field: fem.DiscreteField,
+    collider_velocity: wp.array(dtype=wp.vec3),
+    collider_friction: wp.array(dtype=float),
+    collider_adhesion: wp.array(dtype=float),
+    collider_ids: wp.array(dtype=int),
+):
+    collision_node_count = collider_position_field.dof_values.shape[0]
+
+    collider_position_field.dof_values.fill_(wp.vec3(fem.OUTSIDE))
+    fem.interpolate(world_position, dest=collider_position_field, at=collider_space_restriction, reduction="first")
+
+    activation_distance = (
+        0.0 if collider_position_field.degree == 0 else _COLLIDER_ACTIVATION_DISTANCE / collider_position_field.degree
+    )
+
+    wp.launch(
+        rasterize_collider_kernel,
+        dim=collision_node_count,
+        inputs=[
+            collider,
+            body_q,
+            body_qd,
+            voxel_size,
+            activation_distance,
+            dt,
+            collider_position_field.dof_values,
+            collider_node_volume,
+            collider_distance_field.dof_values,
+            collider_velocity,
+            collider_normal_field.dof_values,
+            collider_friction,
+            collider_adhesion,
+            collider_ids,
+        ],
+    )
+
+
+def interpolate_collider_normals(
+    collider_space_restriction: fem.SpaceRestriction,
+    collider_distance_field: fem.DiscreteField,
+    collider_normal_field: fem.DiscreteField,
+):
+    # collider_distance_field.dof_values = corrected_distance
+    corrected_normal = wp.empty_like(collider_normal_field.dof_values)
+    fem.interpolate(
+        collider_gradient_field,
+        dest=corrected_normal,
+        dest_space=collider_normal_field.space,
+        at=collider_space_restriction,
+        fields={"distance": collider_distance_field, "normal": collider_normal_field},
+        reduction="mean",
+    )
+
+    wp.launch(
+        normalize_gradient,
+        dim=collider_normal_field.dof_values.shape,
+        inputs=[corrected_normal, collider_normal_field.dof_values],
+    )
+
+
 def allot_collider_mass(
     voxel_size: float,
     node_volumes: wp.array(dtype=float),
@@ -452,9 +578,10 @@ def build_rigidity_matrix(
         node_volumes: Per-velocity-node volume fractions.
         node_positions: World-space node positions (3D).
         collider: Packed collider parameters and geometry handles.
+        body_q: Rigid body transforms.
+        body_mass: Rigid body masses.
+        body_inv_inertia: Rigid body inverse inertia tensors.
         collider_ids: Per-velocity-node collider id, or -2 when not active.
-        collider_coms: Per-collider centers of mass in world space.
-        collider_inv_inertia: Per-collider inverse inertia tensors in world space.
         collider_total_volumes: Per-collider integrated volumes used to derive densities.
 
     Returns:
