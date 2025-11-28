@@ -197,7 +197,7 @@ class Example:
         self.viewer.log_contacts(self.contacts, self.state_0)
         self.viewer.end_frame()
 
-    def test(self):
+    def test_final(self):
         num_bodies_per_world = self.model.body_count // self.num_worlds
         for i in range(self.num_worlds):
             world_pos = wp.vec3(*self.initial_world_positions[i])
