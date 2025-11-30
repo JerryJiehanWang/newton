@@ -2665,17 +2665,26 @@ class SolverMuJoCo(SolverBase):
 
         bodies_per_world = self.model.body_count // self.model.num_worlds
 
+        # Get gravcomp if available
+        mujoco_attrs = getattr(self.model, "mujoco", None)
+        gravcomp = getattr(mujoco_attrs, "gravcomp", None) if mujoco_attrs is not None else None
+
         wp.launch(
             update_body_mass_ipos_kernel,
             dim=self.model.body_count,
             inputs=[
                 self.model.body_com,
                 self.model.body_mass,
+                gravcomp,
                 bodies_per_world,
                 self.model.up_axis,
                 self.to_mjc_body_index,
             ],
-            outputs=[self.mjw_model.body_ipos, self.mjw_model.body_mass],
+            outputs=[
+                self.mjw_model.body_ipos,
+                self.mjw_model.body_mass,
+                self.mjw_model.body_gravcomp,
+            ],
             device=self.model.device,
         )
 
