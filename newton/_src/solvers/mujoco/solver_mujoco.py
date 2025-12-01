@@ -2579,7 +2579,7 @@ class SolverMuJoCo(SolverBase):
             # "jnt_actfrcrange",
             # "jnt_margin",
             "dof_armature",
-            # "dof_damping",
+            "dof_damping",
             # "dof_invweight0",
             "dof_frictionloss",
             # "dof_solimp",
