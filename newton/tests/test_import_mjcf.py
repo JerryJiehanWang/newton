@@ -583,29 +583,24 @@ class TestImportMjcf(unittest.TestCase):
 </mujoco>
 """
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            mjcf_path = os.path.join(tmpdir, "cylinder_test.xml")
-            with open(mjcf_path, "w") as f:
-                f.write(mjcf_content)
+        builder = newton.ModelBuilder()
+        builder.add_mjcf(mjcf_content)
 
-            builder = newton.ModelBuilder()
-            builder.add_mjcf(mjcf_path)
+        # Check that we have the correct number of shapes
+        self.assertEqual(builder.shape_count, 4)
 
-            # Check that we have the correct number of shapes
-            self.assertEqual(builder.shape_count, 4)
+        # Check shape types
+        shape_types = list(builder.shape_type)
 
-            # Check shape types
-            shape_types = list(builder.shape_type)
+        # First two shapes should be cylinders
+        self.assertEqual(shape_types[0], GeoType.CYLINDER)
+        self.assertEqual(shape_types[1], GeoType.CYLINDER)
 
-            # First two shapes should be cylinders
-            self.assertEqual(shape_types[0], GeoType.CYLINDER)
-            self.assertEqual(shape_types[1], GeoType.CYLINDER)
+        # Third shape should be capsule
+        self.assertEqual(shape_types[2], GeoType.CAPSULE)
 
-            # Third shape should be capsule
-            self.assertEqual(shape_types[2], GeoType.CAPSULE)
-
-            # Fourth shape should be box
-            self.assertEqual(shape_types[3], GeoType.BOX)
+        # Fourth shape should be box
+        self.assertEqual(shape_types[3], GeoType.BOX)
 
     def test_cylinder_properties_preserved(self):
         """Test that cylinder properties (radius, height) are correctly imported."""
@@ -619,23 +614,18 @@ class TestImportMjcf(unittest.TestCase):
 </mujoco>
 """
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            mjcf_path = os.path.join(tmpdir, "cylinder_props.xml")
-            with open(mjcf_path, "w") as f:
-                f.write(mjcf_content)
+        builder = newton.ModelBuilder()
+        builder.add_mjcf(mjcf_content)
 
-            builder = newton.ModelBuilder()
-            builder.add_mjcf(mjcf_path)
+        # Check shape properties
+        self.assertEqual(builder.shape_count, 1)
+        self.assertEqual(builder.shape_type[0], GeoType.CYLINDER)
 
-            # Check shape properties
-            self.assertEqual(builder.shape_count, 1)
-            self.assertEqual(builder.shape_type[0], GeoType.CYLINDER)
-
-            # Check that radius and half_height are preserved
-            # shape_scale stores (radius, half_height, 0) for cylinders
-            shape_scale = builder.shape_scale[0]
-            self.assertAlmostEqual(shape_scale[0], 0.75)  # radius
-            self.assertAlmostEqual(shape_scale[1], 1.5)  # half_height
+        # Check that radius and half_height are preserved
+        # shape_scale stores (radius, half_height, 0) for cylinders
+        shape_scale = builder.shape_scale[0]
+        self.assertAlmostEqual(shape_scale[0], 0.75)  # radius
+        self.assertAlmostEqual(shape_scale[1], 1.5)  # half_height
 
 
 if __name__ == "__main__":
