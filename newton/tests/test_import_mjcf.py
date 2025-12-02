@@ -31,6 +31,8 @@ class TestImportMjcf(unittest.TestCase):
         builder.default_shape_cfg.ke = 123.0
         builder.default_shape_cfg.kd = 456.0
         builder.default_shape_cfg.mu = 789.0
+        builder.default_shape_cfg.torsional_friction = 0.999
+        builder.default_shape_cfg.rolling_friction = 0.888
         builder.default_joint_cfg.armature = 42.0
         mjcf_filename = newton.examples.get_asset("nv_humanoid.xml")
         builder.add_mjcf(

@@ -427,10 +427,6 @@ class Model:
 
         self.rigid_contact_max = 0
         """Number of potential contact points between rigid bodies."""
-        self.rigid_contact_torsional_friction = 0.0
-        """Torsional friction coefficient for rigid body contacts (used by :class:`SolverXPBD`)."""
-        self.rigid_contact_rolling_friction = 0.0
-        """Rolling friction coefficient for rigid body contacts (used by :class:`SolverXPBD`)."""
 
         self.up_vector = np.array((0.0, 0.0, 1.0))
         """Up vector of the world, shape [3], float."""
@@ -559,6 +555,8 @@ class Model:
         self.attribute_frequency["shape_material_ka"] = ModelAttributeFrequency.SHAPE
         self.attribute_frequency["shape_material_mu"] = ModelAttributeFrequency.SHAPE
         self.attribute_frequency["shape_material_restitution"] = ModelAttributeFrequency.SHAPE
+        self.attribute_frequency["shape_material_torsional_friction"] = ModelAttributeFrequency.SHAPE
+        self.attribute_frequency["shape_material_rolling_friction"] = ModelAttributeFrequency.SHAPE
         self.attribute_frequency["shape_type"] = ModelAttributeFrequency.SHAPE
         self.attribute_frequency["shape_is_solid"] = ModelAttributeFrequency.SHAPE
         self.attribute_frequency["shape_thickness"] = ModelAttributeFrequency.SHAPE

@@ -1912,10 +1912,6 @@ class SolverMuJoCo(SolverBase):
             geom_solref = (self.contact_stiffness_time_const, 1.0)
         defaults.geom.solref = geom_solref
         defaults.geom.solimp = geom_solimp
-        # Use model's friction parameters if geom_friction is not provided
-        if geom_friction is None:
-            geom_friction = (1.0, model.rigid_contact_torsional_friction, model.rigid_contact_rolling_friction)
-        defaults.geom.friction = geom_friction
         # defaults.geom.contype = 0
         spec.compiler.inertiafromgeom = mujoco.mjtInertiaFromGeom.mjINERTIAFROMGEOM_AUTO
 
@@ -1978,6 +1974,8 @@ class SolverMuJoCo(SolverBase):
         shape_flags = model.shape_flags.numpy()
         shape_world = model.shape_world.numpy()
         shape_mu = model.shape_material_mu.numpy()
+        shape_torsional_friction = model.shape_material_torsional_friction.numpy()
+        shape_rolling_friction = model.shape_material_rolling_friction.numpy()
 
         eq_constraint_type = model.equality_constraint_type.numpy()
         eq_constraint_body1 = model.equality_constraint_body1.numpy()
@@ -2152,12 +2150,14 @@ class SolverMuJoCo(SolverBase):
                         # collide with anything except shapes from the same color
                         geom_params["conaffinity"] = collision_mask_everything & ~contype
 
-                # set friction from Newton shape materials using model's friction parameters
+                # set friction from Newton shape materials
                 mu = shape_mu[shape]
+                torsional = shape_torsional_friction[shape]
+                rolling = shape_rolling_friction[shape]
                 geom_params["friction"] = [
                     mu,
-                    model.rigid_contact_torsional_friction * mu,
-                    model.rigid_contact_rolling_friction * mu,
+                    torsional,
+                    rolling,
                 ]
 
                 body.add_geom(**geom_params)
