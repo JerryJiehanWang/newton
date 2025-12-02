@@ -74,15 +74,12 @@ class CollisionSetup:
         self.builder.add_articulation()
         body_a = self.builder.add_body(xform=wp.transform(wp.vec3(-1.0, 0.0, 0.0)))
         self.add_shape(shape_type_a, body_a)
-        self.builder.add_joint_free(body_a)
 
         self.init_velocity = 5.0
         self.builder.joint_qd[0] = self.builder.body_qd[-1][0] = self.init_velocity
 
-        self.builder.add_articulation()
         body_b = self.builder.add_body(xform=wp.transform(wp.vec3(1.0, 0.0, 0.0)))
         self.add_shape(shape_type_b, body_b)
-        self.builder.add_joint_free(body_b)
 
         self.model = self.builder.finalize(device=device)
         self.state_0 = self.model.state()

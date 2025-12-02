@@ -571,30 +571,32 @@ def parse_mjcf(
                         "y": [0.0, 1.0, 0.0],
                         "z": [0.0, 0.0, 1.0],
                     }
-                    builder.add_joint_d6(
-                        linear_axes=[ModelBuilder.JointDofConfig(axis=axes[a]) for a in linear_axes],
-                        angular_axes=[ModelBuilder.JointDofConfig(axis=axes[a]) for a in angular_axes],
-                        parent_xform=base_parent_xform,
-                        child_xform=base_child_xform,
-                        parent=-1,
-                        child=link,
-                        key="base_joint",
+                    joint_indices.append(
+                        builder.add_joint_d6(
+                            linear_axes=[ModelBuilder.JointDofConfig(axis=axes[a]) for a in linear_axes],
+                            angular_axes=[ModelBuilder.JointDofConfig(axis=axes[a]) for a in angular_axes],
+                            parent_xform=base_parent_xform,
+                            child_xform=base_child_xform,
+                            parent=-1,
+                            child=link,
+                            key="base_joint",
+                        )
                     )
                 elif isinstance(base_joint, dict):
                     base_joint["parent"] = -1
-                    base_joint["child"] = root
+                    base_joint["child"] = link
                     base_joint["parent_xform"] = base_parent_xform
                     base_joint["child_xform"] = base_child_xform
                     base_joint["key"] = "base_joint"
-                    builder.add_joint(**base_joint)
+                    joint_indices.append(builder.add_joint(**base_joint))
                 else:
                     raise ValueError(
                         "base_joint must be a comma-separated string of joint axes or a dict with joint parameters"
                     )
             elif floating is not None and floating:
-                builder.add_joint_free(link, key="floating_base")
+                joint_indices.append(builder.add_joint_free(link, key="floating_base"))
             else:
-                builder.add_joint_fixed(-1, link, parent_xform=_xform, key="fixed_base")
+                joint_indices.append(builder.add_joint_fixed(-1, link, parent_xform=_xform, key="fixed_base"))
 
         else:
             joint_pos = joint_pos[0] if len(joint_pos) > 0 else wp.vec3(0.0, 0.0, 0.0)
@@ -884,7 +886,7 @@ def parse_mjcf(
 
     visual_shapes = []
     start_shape_count = len(builder.shape_type)
-    builder.add_articulation(key=root.attrib.get("model"))
+    joint_indices = []  # Collect joint indices as we create them
 
     world = root.find("worldbody")
     world_class = get_class(world)
@@ -984,6 +986,11 @@ def parse_mjcf(
         for i in range(start_shape_count, end_shape_count):
             for j in range(i + 1, end_shape_count):
                 builder.shape_collision_filter_pairs.append((i, j))
+
+    # Create articulation from all collected joints
+    if joint_indices:
+        articulation_key = root.attrib.get("model")
+        builder.add_articulation(joints=joint_indices, key=articulation_key)
 
     if collapse_fixed_joints:
         builder.collapse_fixed_joints()

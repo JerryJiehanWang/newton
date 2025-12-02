@@ -39,10 +39,10 @@ class TestCustomAttributes(unittest.TestCase):
 
     def _add_test_robot(self, builder: newton.ModelBuilder) -> dict[str, int]:
         """Build a simple 2-bar linkage robot without custom attributes."""
-        base = builder.add_body(xform=wp.transform([0.0, 0.0, 0.0], wp.quat_identity()), mass=1.0)
+        base = builder.add_link(xform=wp.transform([0.0, 0.0, 0.0], wp.quat_identity()), mass=1.0)
         builder.add_shape_box(base, hx=0.1, hy=0.1, hz=0.1)
 
-        link1 = builder.add_body(xform=wp.transform([0.0, 0.0, 0.5], wp.quat_identity()), mass=0.5)
+        link1 = builder.add_link(xform=wp.transform([0.0, 0.0, 0.5], wp.quat_identity()), mass=0.5)
         builder.add_shape_capsule(link1, radius=0.05, half_height=0.2)
 
         joint1 = builder.add_joint_revolute(
@@ -53,7 +53,7 @@ class TestCustomAttributes(unittest.TestCase):
             axis=[0.0, 1.0, 0.0],
         )
 
-        link2 = builder.add_body(xform=wp.transform([0.0, 0.0, 0.9], wp.quat_identity()), mass=0.3)
+        link2 = builder.add_link(xform=wp.transform([0.0, 0.0, 0.9], wp.quat_identity()), mass=0.3)
         builder.add_shape_capsule(link2, radius=0.03, half_height=0.15)
 
         joint2 = builder.add_joint_revolute(
@@ -257,7 +257,7 @@ class TestCustomAttributes(unittest.TestCase):
 
         robot_entities = self._add_test_robot(builder)
 
-        body = builder.add_body(mass=1.0)
+        body = builder.add_link(mass=1.0)
         builder.add_joint_revolute(
             parent=robot_entities["link2"],
             child=body,
@@ -301,7 +301,7 @@ class TestCustomAttributes(unittest.TestCase):
         robot_entities = self._add_test_robot(builder)
         cfg = newton.ModelBuilder.JointDofConfig
 
-        body = builder.add_body(mass=1.0)
+        body = builder.add_link(mass=1.0)
         builder.add_joint_d6(
             parent=robot_entities["link2"],
             child=body,
@@ -340,7 +340,7 @@ class TestCustomAttributes(unittest.TestCase):
         robot_entities = self._add_test_robot(builder)
         cfg = newton.ModelBuilder.JointDofConfig
 
-        body = builder.add_body(mass=1.0)
+        body = builder.add_link(mass=1.0)
         builder.add_joint_d6(
             parent=robot_entities["link2"],
             child=body,
@@ -579,13 +579,13 @@ class TestCustomAttributes(unittest.TestCase):
         )
 
         # Create a simple robot in sub-builder
-        body1 = sub_builder.add_body(
+        body1 = sub_builder.add_link(
             mass=1.0,
             custom_attributes={"robot_id": 100, "temperature": 37.5},
         )
         sub_builder.add_shape_sphere(body1, radius=0.1, custom_attributes={"shape_color": [1.0, 0.0, 0.0]})
 
-        body2 = sub_builder.add_body(
+        body2 = sub_builder.add_link(
             mass=0.5,
             custom_attributes={"robot_id": 200, "temperature": 38.0},
         )
@@ -933,7 +933,7 @@ class TestCustomAttributes(unittest.TestCase):
         # Create free bodies (no articulation)
         free_body_ids = []
         for i in range(3):
-            body = builder.add_body(
+            body = builder.add_link(
                 xform=wp.transform([float(i), 0.0, 0.0], wp.quat_identity()),
                 mass=1.0,
                 custom_attributes={
@@ -949,35 +949,39 @@ class TestCustomAttributes(unittest.TestCase):
         # Create articulations with bodies and joints
         arctic_body_ids = []
         for i in range(2):
-            builder.add_articulation(
-                custom_attributes={
-                    "articulation_stiffness": 100.0 + float(i) * 50.0,
-                }
-            )
-
             # Create 2-link articulation
             # Temperature NOT assigned to articulated bodies (use defaults)
             # Density assigned with different values than free bodies
-            base = builder.add_body(
+            base = builder.add_link(
                 xform=wp.transform([3.0 + float(i), 0.0, 0.0], wp.quat_identity()),
                 mass=1.0,
                 custom_attributes={"density": 2.0 + float(i) * 0.5},
             )
             builder.add_shape_box(base, hx=0.1, hy=0.1, hz=0.1)
 
-            link = builder.add_body(
+            link = builder.add_link(
                 xform=wp.transform([3.0 + float(i), 0.0, 0.5], wp.quat_identity()),
                 mass=0.5,
                 custom_attributes={"density": 3.0 + float(i) * 0.5},
             )
             builder.add_shape_capsule(link, radius=0.05, half_height=0.2)
 
-            builder.add_joint_revolute(
+            # Connect base to world with a free joint
+            j_base = builder.add_joint_free(child=base)
+            j_revolute = builder.add_joint_revolute(
                 parent=base,
                 child=link,
                 parent_xform=wp.transform([0.0, 0.0, 0.1], wp.quat_identity()),
                 child_xform=wp.transform([0.0, 0.0, -0.2], wp.quat_identity()),
                 axis=[0.0, 1.0, 0.0],
+            )
+
+            # Create articulation from joints
+            builder.add_articulation(
+                [j_base, j_revolute],
+                custom_attributes={
+                    "articulation_stiffness": 100.0 + float(i) * 50.0,
+                },
             )
             arctic_body_ids.extend([base, link])
 

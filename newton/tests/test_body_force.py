@@ -125,6 +125,7 @@ def test_3d_articulation(test: TestBodyForce, device, solver_fn, test_angular, u
         #     newton.ModelBuilder.JointDofConfig(axis=newton.Axis.Z, target_ke=ke, target_kd=kd),
         # ],
     )
+    builder.add_articulation([j])
 
     model = builder.finalize(device=device)
     # print("model.body_inertia_inv\n", model.body_inv_inertia)

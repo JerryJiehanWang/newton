@@ -108,18 +108,14 @@ def test_shapes_on_plane(test: TestRigidContact, device, solver_fn):
     for i, scale in enumerate([0.5, 1.0]):
         y_pos = i * 1.5
 
-        builder.add_articulation()
         b = builder.add_body(xform=wp.transform(wp.vec3(0.0, y_pos, 1.0), wp.quat_identity()))
-        builder.add_joint_free(b)
         builder.add_shape_sphere(
             body=b,
             radius=0.1 * scale,
         )
         expected_end_positions.append(wp.vec3(0.0, y_pos, 0.1 * scale))
 
-        builder.add_articulation()
         b = builder.add_body(xform=wp.transform(wp.vec3(2.0, y_pos, 1.0), wp.quat_identity()))
-        builder.add_joint_free(b)
         # Apply Y-axis rotation to capsule
         xform = wp.transform(wp.vec3(), quat_between_axes(newton.Axis.Z, newton.Axis.Y))
         builder.add_shape_capsule(
@@ -130,9 +126,7 @@ def test_shapes_on_plane(test: TestRigidContact, device, solver_fn):
         )
         expected_end_positions.append(wp.vec3(2.0, y_pos, 0.1 * scale))
 
-        builder.add_articulation()
         b = builder.add_body(xform=wp.transform(wp.vec3(4.0, y_pos, 1.0), wp.quat_identity()))
-        builder.add_joint_free(b)
         builder.add_shape_box(
             body=b,
             hx=0.2 * scale,
@@ -141,9 +135,7 @@ def test_shapes_on_plane(test: TestRigidContact, device, solver_fn):
         )
         expected_end_positions.append(wp.vec3(4.0, y_pos, 0.3 * scale))
 
-        builder.add_articulation()
         b = builder.add_body(xform=wp.transform(wp.vec3(5.0, y_pos, 1.0), wp.quat_identity()))
-        builder.add_joint_free(b)
         builder.add_shape_cylinder(
             body=b,
             radius=0.1 * scale,
@@ -151,9 +143,7 @@ def test_shapes_on_plane(test: TestRigidContact, device, solver_fn):
         )
         expected_end_positions.append(wp.vec3(5.0, y_pos, 0.3 * scale))
 
-        builder.add_articulation()
         b = builder.add_body(xform=wp.transform(wp.vec3(7.0, y_pos, 1.0), wp.quat_identity()))
-        builder.add_joint_free(b)
         builder.add_shape_mesh(
             body=b,
             mesh=cube_mesh,
@@ -280,12 +270,10 @@ def test_shape_collisions_gjk_mpr_multicontact(test: TestRigidContact, device, v
 
     # Cube 1 (left side)
     body_cube1 = builder.add_body(xform=wp.transform(p=ramp_center_surface + offset_a, q=cube_quat))
-    builder.add_joint_free(body_cube1)
     builder.add_shape_box(body=body_cube1, hx=CUBE_SIZE / 2, hy=CUBE_SIZE / 2, hz=CUBE_SIZE / 2)
 
     # Cube 2 (right side)
     body_cube2 = builder.add_body(xform=wp.transform(p=ramp_center_surface + offset_b, q=cube_quat))
-    builder.add_joint_free(body_cube2)
     builder.add_shape_box(body=body_cube2, hx=CUBE_SIZE / 2, hy=CUBE_SIZE / 2, hz=CUBE_SIZE / 2)
 
     # Spheres
@@ -294,11 +282,9 @@ def test_shape_collisions_gjk_mpr_multicontact(test: TestRigidContact, device, v
 
     sphere_radius = CUBE_SIZE / 2
     body_sphere1 = builder.add_body(xform=wp.transform(p=ramp_center_surface + offset_a, q=cube_quat))
-    builder.add_joint_free(body_sphere1)
     builder.add_shape_sphere(body=body_sphere1, radius=sphere_radius)
 
     body_sphere2 = builder.add_body(xform=wp.transform(p=ramp_center_surface + offset_b, q=cube_quat))
-    builder.add_joint_free(body_sphere2)
     builder.add_shape_sphere(body=body_sphere2, radius=sphere_radius)
 
     # Capsule
@@ -310,7 +296,6 @@ def test_shape_collisions_gjk_mpr_multicontact(test: TestRigidContact, device, v
     capsule_quat = cube_quat * capsule_local_quat
 
     body_capsule = builder.add_body(xform=wp.transform(p=ramp_center_surface + offset_capsule, q=capsule_quat))
-    builder.add_joint_free(body_capsule)
     builder.add_shape_capsule(body=body_capsule, radius=capsule_radius, half_height=capsule_height / 2)
 
     # Cylinder
@@ -322,7 +307,6 @@ def test_shape_collisions_gjk_mpr_multicontact(test: TestRigidContact, device, v
     cylinder_quat = cube_quat * cylinder_local_quat
 
     body_cylinder = builder.add_body(xform=wp.transform(p=ramp_center_surface + offset_cylinder, q=cylinder_quat))
-    builder.add_joint_free(body_cylinder)
     builder.add_shape_cylinder(body=body_cylinder, radius=cylinder_radius, half_height=cylinder_height / 2)
 
     # Two more cubes after the cylinder
@@ -331,12 +315,10 @@ def test_shape_collisions_gjk_mpr_multicontact(test: TestRigidContact, device, v
 
     # Cube 3 (left side)
     body_cube3 = builder.add_body(xform=wp.transform(p=ramp_center_surface + offset_a, q=cube_quat))
-    builder.add_joint_free(body_cube3)
     builder.add_shape_box(body=body_cube3, hx=CUBE_SIZE / 2, hy=CUBE_SIZE / 2, hz=CUBE_SIZE / 2)
 
     # Cube 4 (right side)
     body_cube4 = builder.add_body(xform=wp.transform(p=ramp_center_surface + offset_b, q=cube_quat))
-    builder.add_joint_free(body_cube4)
     builder.add_shape_box(body=body_cube4, hx=CUBE_SIZE / 2, hy=CUBE_SIZE / 2, hz=CUBE_SIZE / 2)
 
     # Two cones after the cubes (z-axis aligned with ramp_up)
@@ -349,12 +331,10 @@ def test_shape_collisions_gjk_mpr_multicontact(test: TestRigidContact, device, v
 
     # Cone 1 (left side)
     body_cone1 = builder.add_body(xform=wp.transform(p=ramp_center_surface + offset_a, q=cone_quat))
-    builder.add_joint_free(body_cone1)
     builder.add_shape_cone(body=body_cone1, radius=cone_radius, half_height=cone_height / 2)
 
     # Cone 2 (right side)
     body_cone2 = builder.add_body(xform=wp.transform(p=ramp_center_surface + offset_b, q=cone_quat))
-    builder.add_joint_free(body_cone2)
     builder.add_shape_cone(body=body_cone2, radius=cone_radius, half_height=cone_height / 2)
 
     # Two more cubes after the cones
@@ -363,12 +343,10 @@ def test_shape_collisions_gjk_mpr_multicontact(test: TestRigidContact, device, v
 
     # Cube 5 (left side)
     body_cube5 = builder.add_body(xform=wp.transform(p=ramp_center_surface + offset_a, q=cube_quat))
-    builder.add_joint_free(body_cube5)
     builder.add_shape_box(body=body_cube5, hx=CUBE_SIZE / 2, hy=CUBE_SIZE / 2, hz=CUBE_SIZE / 2)
 
     # Cube 6 (right side)
     body_cube6 = builder.add_body(xform=wp.transform(p=ramp_center_surface + offset_b, q=cube_quat))
-    builder.add_joint_free(body_cube6)
     builder.add_shape_box(body=body_cube6, hx=CUBE_SIZE / 2, hy=CUBE_SIZE / 2, hz=CUBE_SIZE / 2)
 
     # Two cubes using convex hull representation (8 corner points)
@@ -384,12 +362,10 @@ def test_shape_collisions_gjk_mpr_multicontact(test: TestRigidContact, device, v
 
     # Convex Hull Cube 1 (left side)
     body_convex_cube1 = builder.add_body(xform=wp.transform(p=ramp_center_surface + offset_a, q=convex_cube_quat))
-    builder.add_joint_free(body_convex_cube1)
     builder.add_shape_convex_hull(body=body_convex_cube1, mesh=cube_mesh, scale=(1.0, 1.0, 1.0))
 
     # Convex Hull Cube 2 (right side)
     body_convex_cube2 = builder.add_body(xform=wp.transform(p=ramp_center_surface + offset_b, q=convex_cube_quat))
-    builder.add_joint_free(body_convex_cube2)
     builder.add_shape_convex_hull(body=body_convex_cube2, mesh=cube_mesh, scale=(1.0, 1.0, 1.0))
 
     # Add ground plane
@@ -538,7 +514,6 @@ def test_mesh_box_on_ground(test: TestRigidContact, device):
 
     # Add mesh box body, positioned so bottom face is at z=0 (center at z=box_half)
     body = builder.add_body(xform=wp.transform(wp.vec3(0.0, 0.0, box_half), wp.quat_identity()))
-    builder.add_joint_free(body)
     builder.add_shape_mesh(body=body, mesh=box_mesh)
 
     # Finalize model
@@ -635,7 +610,6 @@ def test_mujoco_warp_newton_contacts(test: TestRigidContact, device):
     # Add a single cube body
     cube_size = 0.5
     body = cube_builder.add_body(xform=wp.transform(wp.vec3(0, 0, cube_size), wp.quat_identity()))
-    cube_builder.add_joint_free(body)
     cube_builder.add_shape_box(body=body, hx=cube_size / 2, hy=cube_size / 2, hz=cube_size / 2)
 
     # Replicate the cube across 4 environments
@@ -759,7 +733,6 @@ def test_mujoco_convex_on_convex(test: TestRigidContact, device, solver_fn):
 
     # Dynamic convex cube, start slightly above ground
     top_body = builder.add_body(xform=wp.transform(wp.vec3(0.0, 0.0, 0.5), wp.quat_identity()))
-    builder.add_joint_free(top_body)
     builder.add_shape_convex_hull(
         body=top_body,
         xform=wp.transform(wp.vec3(0.0, 0.0, 0.0), wp.quat_identity()),
