@@ -141,6 +141,10 @@ class TiledCameraSensor:
         height: Image height in pixels for each camera.
     """
 
+    RenderContext = RenderContext
+    LightType = LightType
+    GeomType = GeomType
+
     @dataclass
     class Options:
         checkerboard_texture: bool = False
@@ -255,7 +259,7 @@ class TiledCameraSensor:
         Args:
             state: The current simulation state containing body transforms.
             camera_transforms: Array of camera transforms in world space, shape (num_cameras, num_worlds).
-            camera_rays: Array of camera rays in camera space, shape (num_cameras, ).
+            camera_rays: Array of camera rays in camera space, shape (num_cameras, height, width, 2).
             color_image: Optional output array for color data (num_worlds, num_cameras, width*height).
                         If None, no color rendering is performed.
             depth_image: Optional output array for depth data (num_worlds, num_cameras, width*height).
@@ -271,7 +275,7 @@ class TiledCameraSensor:
         )
 
     def compute_pinhole_camera_rays(
-        self, camera_fovs: float | list[float] | np.ndarray(dtpye=np.float32) | wp.array(dtype=wp.float32)
+        self, camera_fovs: float | list[float] | np.ndarray | wp.array(dtype=wp.float32)
     ) -> wp.array(dtype=wp.vec3f, ndim=4):
         """
         Compute camera-space ray directions for pinhole cameras.
@@ -280,7 +284,10 @@ class TiledCameraSensor:
         pixel in each camera based on the specified field-of-view angles.
 
         Args:
-            camera_fovs: Array of vertical FOV angles in radians, shape (num_cameras, height, width, 2, ).
+            camera_fovs: Array of vertical FOV angles in radians, shape (num_cameras,).
+
+        Returns:
+            camera_rays: Array of camera rays in camera space, shape (num_cameras, height, width, 2).
         """
 
         camera_rays = wp.empty(
@@ -289,7 +296,7 @@ class TiledCameraSensor:
 
         if isinstance(camera_fovs, float):
             camera_fovs = wp.array([camera_fovs] * self.render_context.num_cameras, dtype=wp.float32)
-        elif isinstance(camera_fovs, list[float]):
+        elif isinstance(camera_fovs, list):
             assert len(camera_fovs) == self.render_context.num_cameras, (
                 "Length of camera_fovs does not match the number of cameras"
             )

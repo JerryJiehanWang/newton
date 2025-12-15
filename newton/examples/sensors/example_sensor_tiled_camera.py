@@ -27,22 +27,15 @@
 import math
 
 import numpy as np
+import OpenGL.GL as gl
 import warp as wp
 from pxr import Usd, UsdGeom
-
+breakpoint()
 import newton
 import newton.examples
 from newton.sensors import TiledCameraSensor
 
-# Conditionally import OpenGL and ViewerGL only if available
-try:
-    import OpenGL.GL as gl
-    from ...viewer import ViewerGL
-    HAS_OPENGL = True
-except ImportError:
-    HAS_OPENGL = False
-    ViewerGL = None
-    gl = None
+from ...viewer import ViewerGL
 
 
 class Example:
@@ -50,7 +43,6 @@ class Example:
         self.enable_rendering = True
         self.color_image_texture = 0
         self.depth_image_texture = 0
-        self.has_opengl = HAS_OPENGL and ViewerGL is not None and isinstance(viewer, ViewerGL)
 
         self.viewer = viewer
 
@@ -112,6 +104,7 @@ class Example:
             self.camera_rays = self.tiled_camera_sensor.compute_pinhole_camera_rays(
                 math.radians(self.viewer.camera.fov)
             )
+            breakpoint()
         else:
             self.camera_rays = self.tiled_camera_sensor.compute_pinhole_camera_rays(math.radians(45.0))
         self.tiled_camera_sensor_color_image = self.tiled_camera_sensor.create_color_image_output()
@@ -142,6 +135,7 @@ class Example:
                 ],
                 dtype=wp.transformf,
             )
+            breakpoint()
 
         else:
             camera_position = wp.vec3f(10.0, 0.0, 2.0)
@@ -217,7 +211,7 @@ class Example:
 
         gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
-    def test(self):
+    def test_final(self):
         self.render_sensors()
         color_image = self.tiled_camera_sensor_color_image.numpy()
         assert color_image.shape == (1, 1, 640 * 360)
